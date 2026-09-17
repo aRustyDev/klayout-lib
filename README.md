@@ -123,6 +123,51 @@ one invalid combination — a pad pushed away from the device with nothing
 joining it back — impossible to express. A `Lead(length_um=0)` is likewise
 refused, and says to drop the lead instead.
 
+### Mixing pad styles across one sweep
+
+Most masks want both: an overlap wherever the device is long enough to take
+one, a lead where it is not. A `PadPlan` holds the two styles and `build_cells`
+applies them, so you name a pad only where you care:
+
+```python
+OVERLAP = Pad(size_um=40)
+LEADED  = Pad(size_um=40, lead=Lead(length_um=30))
+PADS    = PadPlan(overlap=OVERLAP, leaded=LEADED)
+
+DEVICES = [
+    StraightBar(10, 10),                        # AUTO -> leaded, too short
+    StraightBar(200, 10),                       # AUTO -> overlap, it fits
+    (GreekCross(...), LEADED),                  # explicit
+    (Dogbone(50, 4, 20), None),                 # explicitly bare
+]
+
+asm = build_cells(layout, metal, DEVICES, plan=PADS, pad_layer=pads)
+grid(layout, top, asm.cells, cols=3)
+report_lines(asm.devices, PROCESS, pads=asm.pads)
+```
+
+A bare device takes `AUTO`; a `(device, pad)` pair overrides it. `AUTO` prefers
+the overlapping pad — it adds no lead resistance and no extra constriction —
+and falls back to the lead only when the overlap would bridge the terminals.
+`None` is a decision ("draw this one bare"), which is not the same as `AUTO`.
+
+`Assembly` keeps `cells`, `devices` and `pads` aligned by index, so the report
+can name the style each device actually got:
+
+```
+BAR_L50_W10    squares=  5.00  R_s not measured yet    PAD40TP6L30
+BAR_L100_W10   squares= 10.00  R_s not measured yet    PAD40TP6
+```
+
+`asm.bare` lists anything that ended up with no pad, and `plan.describe(device)`
+explains any single choice.
+
+**Watch for confounding.** If you are comparing two devices that differ only in
+geometry, pin their pads explicitly rather than leaving both on `AUTO` — the
+policy keys off device length, so a geometry change can silently change the pad
+style too and the comparison stops being like for like. The macro's two Greek
+crosses are both pinned to `LEADED` for exactly this reason.
+
 `pads_bridge(pad)` answers the question directly, and
 `report_lines(devices, process, pad=pad)` flags any device it would skip, so a
 missing pad is announced rather than silently dropped.
@@ -242,7 +287,8 @@ dimension that derives sheet resistance, and the two must not be confusable.
 | `report` | `report_lines()` | — |
 | `base` | `Resistor` ABC, `merged()`, `apply_corners()` | pya |
 | `devices` | `StraightBar`, `Dogbone`, `Serpentine`, `GreekCross` | pya |
-| `pads` | `Pad` | pya |
+| `pads` | `Pad`, `Lead` | pya |
+| `assembly` | `PadPlan`, `AUTO`, `build_cells()` — mixing pad styles | — |
 | `marks` | alignment marks, `die_outline()`, `fits_in_die()` | pya |
 | `labels` | `text_cell()` | pya + the `Basic` PCell library |
 | `placement` | `stack()`, `grid()` | pya |

@@ -56,10 +56,10 @@ if DEV_RELOAD:
 
 import pya
 
-from microresistor import (DBU, Corner, CornerSpec, Dogbone, GreekCross, Lead,
-                           Pad, Process, Serpentine, StraightBar,
-                           alignment_marks, die_outline, fits_in_die, grid,
-                           report_lines)
+from microresistor import (AUTO, DBU, Corner, CornerSpec, Dogbone, GreekCross,
+                           Lead, Pad, PadPlan, Process, Serpentine,
+                           StraightBar, alignment_marks, build_cells,
+                           die_outline, fits_in_die, grid, report_lines)
 
 # ---------------------------------------------------------------------------
 # Mask setup
@@ -72,13 +72,18 @@ PAD_LAYER = (3, 0)
 LABEL_LAYER = (10, 0)
 DIE_LAYER = (0, 0)
 
-# A pad WITH a lead sits outside the device and straps back to each terminal;
-# that is what lets a 10 um bar carry a 40 um probe pad, since an overlapping
-# pad would meet its partner in the middle and short the device out. Drop the
-# lead (Pad(size_um=40)) and the pad overlaps the trace instead. PAD = None
-# draws the resistors bare.
-PAD = Pad(size_um=40, lead=Lead(length_um=30),
-          corner=CornerSpec(Corner.TAPERED, chamfer_um=6))
+# Two pad styles, mixed across the sweep. An OVERLAP pad contacts the trace
+# directly and adds no lead resistance, but needs a device longer than the pad
+# is wide. A LEADED pad sits clear of the device and straps back, which is the
+# only way a 10 um bar can carry a 40 um probe pad.
+#
+# Devices listed bare take AUTO: overlap where it fits, lead where it does not.
+# Name a pad explicitly in DEVICES to override, or None to draw that one bare.
+PAD_CORNER = CornerSpec(Corner.TAPERED, chamfer_um=6)
+OVERLAP = Pad(size_um=40, corner=PAD_CORNER)
+LEADED = Pad(size_um=40, corner=PAD_CORNER, lead=Lead(length_um=30))
+
+PADS = PadPlan(overlap=OVERLAP, leaded=LEADED)
 
 COLS = 3               # measured squarest for this sweep
 GAP_UM = 100.0
@@ -88,8 +93,12 @@ DIE_MARGIN_UM = 150.0  # clearance from the outermost geometry to the die edge
 MITER = CornerSpec(Corner.TAPERED, chamfer_um=4)
 FILLET = CornerSpec(Corner.ROUNDED, radius_um=12)
 
+# Entries are a device, or (device, pad) to override the plan. A bare device
+# takes AUTO.
 DEVICES = [
     # --- sheet-resistance sweep: W fixed, L swept ---------------------
+    # The short three cannot take an overlapping pad, so AUTO leads them out;
+    # the long two get the overlap. That is the mix, decided by geometry.
     StraightBar(10, 10),        # 1 square, contact-dominated
     StraightBar(20, 10),
     StraightBar(50, 10),
@@ -99,10 +108,17 @@ DEVICES = [
     StraightBar(100, 5),
     StraightBar(100, 20),
     StraightBar(100, 50),
-    StraightBar(20, 2),         # same ratio as L100/W10, 1/100 the area
+    StraightBar(20, 2),         # same N as L100/W10, 1/25 the area
+    # --- a matched pair: one resistor, both pad styles -----------------
+    # Same geometry, so the difference between them IS the lead plus the
+    # contact-area change. AUTO would give both the overlap, so both are named.
+    (StraightBar(100, 10, name="BAR_PAIR_OVERLAP"), OVERLAP),
+    (StraightBar(100, 10, name="BAR_PAIR_LEADED"), LEADED),
     # --- four-terminal and wide-contact structures --------------------
     Dogbone(50, 4, 20),         # narrow neck, wide contacts
-    GreekCross(arm_width_um=20, arm_length_um=40),
+    # A cross is probed from four sides, so force the pads clear of the arms
+    # rather than letting them sit on the contacts.
+    (GreekCross(arm_width_um=20, arm_length_um=40), LEADED),
     # --- corner-style comparison at matched geometry ------------------
     # Same trace, same fold count: only the bend treatment differs, so the
     # measured resistances isolate the corner's contribution.
@@ -121,25 +137,14 @@ DEVICES = [
     # A dogbone's neck-to-head junction and a cross's reentrant corners are
     # CONCAVE, so the fillet adds metal where current would otherwise crowd.
     Dogbone(50, 4, 20, corner=CornerSpec(Corner.ROUNDED, radius_um=3)),
-    GreekCross(arm_width_um=20, arm_length_um=40,
-               corner=CornerSpec(Corner.ROUNDED, radius_um=5)),
+    # LEADED to match its sharp-cornered twin above: if the two crosses were
+    # probed differently the corner comparison would be confounded by the pads.
+    (GreekCross(arm_width_um=20, arm_length_um=40,
+                corner=CornerSpec(Corner.ROUNDED, radius_um=5)), LEADED),
 ]
 
 DEFAULT_OUT = os.path.expanduser("~/resistors.gds")
 OUT = os.environ.get("MICRORESISTOR_OUT", DEFAULT_OUT)
-
-
-def pad_for(device):
-    """The pad, unless it would bridge this device's terminals.
-
-    Offset pads clear this by construction, so nothing in the sweep above
-    should come out bare -- but the check stays, because a silently missing
-    pad is the kind of thing you find on a probe station weeks later. The
-    report below names anything it skips.
-    """
-    if PAD is None or device.pads_bridge(PAD):
-        return None
-    return PAD
 
 
 def place_marks(layout, top, metal, pads, content):
@@ -160,16 +165,14 @@ def main():
     layout.dbu = DBU
     top = layout.create_cell("TOP")
     metal = layout.layer(*RESISTOR_LAYER)
-    pads = layout.layer(*PAD_LAYER) if PAD is not None else None
+    pads = layout.layer(*PAD_LAYER)
     die = layout.layer(*DIE_LAYER)
 
-    cells = [d.build_cell(layout, metal, pad=pad_for(d), pad_layer=pads)
-             for d in DEVICES]
-    grid(layout, top, cells, cols=COLS, gap_um=GAP_UM,
+    asm = build_cells(layout, metal, DEVICES, plan=PADS, pad_layer=pads)
+    grid(layout, top, asm.cells, cols=COLS, gap_um=GAP_UM,
          label_layer=LABEL_LAYER, label_mag=10.0)
 
-    if pads is not None:
-        place_marks(layout, top, metal, pads, top.bbox())
+    place_marks(layout, top, metal, pads, top.bbox())
 
     content = top.bbox()
     box = die_outline(layout, top, die,
@@ -178,10 +181,13 @@ def main():
                       centre=(content.center().x * DBU,
                               content.center().y * DBU))
 
-    for line in report_lines(DEVICES, PROCESS, pad=PAD):
+    for line in report_lines(asm.devices, PROCESS, pads=asm.pads):
         print(line)
 
     print()
+    if asm.bare:
+        print("bare (no pad fits):",
+              ", ".join(d.name for d in asm.bare))
     print(f"die      {box.width() * DBU:7.1f} x {box.height() * DBU:7.1f} um")
     print(f"content  {content.width() * DBU:7.1f} x "
           f"{content.height() * DBU:7.1f} um")
