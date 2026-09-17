@@ -8,30 +8,54 @@ process/extraction arithmetic that a GDS file cannot carry.
 
 ## Install
 
-No PyPI publish — install straight from git:
+No PyPI publish — install straight from git with
+[uv](https://docs.astral.sh/uv/):
 
 ```sh
-pip3 install --user git+ssh://git@github.com/aRustyDev/klayout-lib.git
-```
-
-**Use the same interpreter KLayout embeds**, so the package lands on a path
-KLayout searches. On macOS with KLayout 0.30.x that is CommandLineTools Python
-3.9, and `--user` puts it in `~/Library/Python/3.9/lib/python/site-packages`,
-which is already on KLayout's `sys.path`:
-
-```sh
-/Library/Developer/CommandLineTools/usr/bin/python3 -m pip install --user \
+uv pip install \
+    --python /Library/Developer/CommandLineTools/usr/bin/python3 \
+    --target ~/.klayout/python \
     git+ssh://git@github.com/aRustyDev/klayout-lib.git
 ```
 
-Confirm KLayout can see it:
+Both flags carry weight:
+
+- **`--target ~/.klayout/python`** — KLayout puts this directory on `sys.path`
+  at startup, so anything installed there is importable from a macro. It is
+  KLayout-scoped and wipeable, unlike a shared user site-packages.
+- **`--python <CommandLineTools python3>`** — resolve against the interpreter
+  KLayout actually embeds (CPython 3.9.6 for KLayout 0.30.x on macOS), so
+  `requires-python` and environment markers are evaluated for the right version.
+
+`uv pip install --user` is refused outright — *"pip's `--user` is unsupported
+(use a virtual environment instead)"* — and a virtual environment is no help
+here, because KLayout never activates one. `--target` is the mechanism that fits.
+
+Confirm KLayout can see it. Note that `klayout` is **not** on `$PATH` by default
+on macOS, and that KLayout cannot read a script from a shell heredoc
+(`-r /dev/stdin` fails with `Unable to open file`), so use a real file:
 
 ```sh
-klayout -b -r /dev/stdin <<<'import microresistor; print(microresistor.__file__)'
+printf 'import microresistor\nprint(microresistor.__file__)\n' > /tmp/mr_check.py
+/Applications/klayout.app/Contents/MacOS/klayout -b -r /tmp/mr_check.py
+# -> /Users/you/.klayout/python/microresistor/__init__.py
 ```
 
-To pick up new commits, add `--force-reinstall`; to pin a revision, append
-`@<tag-or-sha>` to the URL.
+### Upgrading, pinning, removing
+
+```sh
+# pick up new commits
+uv pip install --python /Library/Developer/CommandLineTools/usr/bin/python3 \
+    --target ~/.klayout/python --reinstall \
+    git+ssh://git@github.com/aRustyDev/klayout-lib.git
+
+# pin a tag, branch or sha by appending @<ref> to the URL
+#   git+ssh://git@github.com/aRustyDev/klayout-lib.git@v0.1.0
+
+# remove
+uv pip uninstall --python /Library/Developer/CommandLineTools/usr/bin/python3 \
+    --target ~/.klayout/python klayout-lib
+```
 
 ### Why `klayout` is not a dependency
 
