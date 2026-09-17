@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "klayout-lib"
+version = "0.1.0"
+description = "Parametric device generators for KLayout"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "aRustyDev" }]
+keywords = ["klayout", "gds", "eda", "layout", "resistor", "van-der-pauw"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+
+# Deliberately EMPTY. Inside KLayout, `pya` is built in; the standalone
+# `klayout` wheel is only needed to run the geometry tests outside the GUI, and
+# it has no prebuilt cp39 arm64 wheel -- declaring it here would make a plain
+# `pip install` compile KLayout from C++ source. It lives in the `test` extra.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "klayout>=0.29"]
+
+[project.urls]
+Homepage = "https://github.com/aRustyDev/klayout-lib"
+Issues = "https://github.com/aRustyDev/klayout-lib/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/microresistor"]
+
+[tool.pytest.ini_options]
+# src-layout: tests import from src/ without needing the package installed, so
+# the fast loop never touches an install.
+pythonpath = ["src"]
+testpaths = ["tests"]
