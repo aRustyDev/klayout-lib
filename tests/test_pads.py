@@ -232,3 +232,105 @@ def test_a_four_terminal_device_is_checked_against_all_four():
     cross = GreekCross(arm_width_um=20, arm_length_um=40)
     assert cross.pads_bridge(Pad(size_um=90))
     assert not cross.pads_bridge(Pad(size_um=15))
+
+
+# --- offset pads with leads -----------------------------------------------
+
+def test_offset_pad_sits_outside_the_device():
+    bar = StraightBar(10, 10)
+    left, right = bar.pad_polygons(Pad(size_um=40, offset_um=30))
+    device = pya.Region()
+    for p in bar.shapes():
+        device.insert(p)
+    dev_bb = device.bbox()
+    # The pads reach well beyond both ends of a 10 um bar.
+    assert pya.Region(left).bbox().left < dev_bb.left
+    assert pya.Region(right).bbox().right > dev_bb.right
+
+
+def test_offset_pad_rescues_a_device_too_short_to_be_centred():
+    """The whole point of offsetting.
+
+    A 40 um pad centred on a 10 um bar shorts it; offset, the same pad fits.
+    """
+    bar = StraightBar(10, 10)
+    assert bar.pads_bridge(Pad(size_um=40))
+    assert not bar.pads_bridge(Pad(size_um=40, offset_um=30))
+
+
+@pytest.mark.parametrize("length", [10, 20, 50, 100, 200])
+def test_offset_pads_never_bridge_across_the_sweep(length):
+    assert not StraightBar(length, 10).pads_bridge(
+        Pad(size_um=40, offset_um=30))
+
+
+def test_offset_pad_and_lead_are_one_polygon():
+    """The lead must actually touch the pad, or the contact is open."""
+    polys = StraightBar(100, 10).pad_polygons(Pad(size_um=40, offset_um=30))
+    assert len(polys) == 2          # one per terminal, lead merged in
+
+
+def test_lead_overlaps_the_terminal():
+    """Contact cannot depend on an exact edge coincidence."""
+    bar = StraightBar(100, 10)
+    terminal = bar.terminals()[0]
+    pad = Pad(size_um=40, offset_um=30)
+    region = pya.Region()
+    for p in pad.polygons_at(terminal, (-1, 0)):
+        region.insert(p)
+    assert not (region & pya.Region(terminal)).is_empty()
+
+
+def test_lead_width_defaults_to_the_terminal_and_can_be_overridden():
+    bar = StraightBar(100, 10)
+    terminal = bar.terminals()[0]
+    default = Pad(size_um=40, offset_um=30).lead_at(terminal, (-1, 0))
+    narrow = Pad(size_um=40, offset_um=30,
+                 lead_width_um=4).lead_at(terminal, (-1, 0))
+    assert default.height() == um(10)      # the terminal's own width
+    assert narrow.height() == um(4)
+
+
+def test_offset_respects_the_requested_gap():
+    bar = StraightBar(100, 10)
+    terminal = bar.terminals()[0]
+    pad_box = Pad(size_um=40, offset_um=30).box_at(terminal, (-1, 0))
+    # Clear gap between the terminal's outer edge and the pad's near edge.
+    assert terminal.left - pad_box.right == um(30)
+
+
+def test_four_terminal_device_pushes_pads_to_four_compass_points():
+    cross = GreekCross(arm_width_um=20, arm_length_um=40)
+    assert cross.terminal_directions() == [(-1, 0), (0, -1), (1, 0), (0, 1)]
+    polys = cross.pad_polygons(Pad(size_um=40, offset_um=20))
+    assert len(polys) == 4
+
+
+def test_centred_pads_are_unchanged_by_the_offset_feature():
+    """offset_um = 0 must behave exactly as before."""
+    terminal = StraightBar(100, 10).terminals()[0]
+    a = Pad(size_um=40).polygons_at(terminal)
+    b = Pad(size_um=40, offset_um=0).polygons_at(terminal, (-1, 0))
+    assert len(a) == len(b) == 1
+    assert a[0].bbox() == b[0].bbox()
+
+
+def test_offset_shows_up_in_the_tag():
+    assert Pad(size_um=40, offset_um=30).tag() == "PAD40SQO30"
+    assert Pad(size_um=40).tag() == "PAD40SQ"
+
+
+def test_offset_pad_rejects_a_negative_gap():
+    with pytest.raises(ValueError, match="cannot be negative"):
+        Pad(size_um=40, offset_um=-1)
+
+
+def test_offset_pads_land_on_the_pad_layer_only():
+    layout = pya.Layout()
+    layout.dbu = 0.001
+    metal, padl = layout.layer(1, 0), layout.layer(2, 0)
+    plain = StraightBar(10, 10).build_cell(layout, metal)
+    padded = StraightBar(10, 10).build_cell(
+        layout, metal, pad=Pad(size_um=40, offset_um=30), pad_layer=padl)
+    assert (_region(plain, metal) ^ _region(padded, metal)).is_empty()
+    assert _region(padded, padl).count() == 2
