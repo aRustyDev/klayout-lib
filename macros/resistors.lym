@@ -26,7 +26,10 @@ where the GDS goes. Set MICRORESISTOR_OUT to choose the output path, or edit
 DEFAULT_OUT below.
 
 Install the library with:
-    pip3 install --user git+ssh://git@github.com/aRustyDev/klayout-lib.git
+    uv pip install \
+        --python /Library/Developer/CommandLineTools/usr/bin/python3 \
+        --target ~/.klayout/python \
+        git+ssh://git@github.com/aRustyDev/klayout-lib.git
 """
 
 import os
