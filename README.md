@@ -95,21 +95,33 @@ A Greek cross gets four pads and a bar two. The cell name picks up a pad suffix
 (`BAR_L100_W10_PAD40TP6`), so one device can be built with several pad styles
 without colliding.
 
-**Centred pads only work when the device is longer than the pad is wide.** Two
-40 µm pads on a 10 µm bar meet in the middle and short it out, so `build_cell`
-refuses to draw them. Give the pad an `offset_um` and it sits *outside* the
-device instead, joined to each terminal by a lead — which is how a real test
-structure gets a big probe pad onto a small resistor:
+**A pad contacts the trace one of two ways, and the `lead` chooses which.**
+
+Without a lead — the default — the pad is centred on the terminal and simply
+**overlaps the trace**. That is the right answer whenever the device is longer
+than the pad is wide.
 
 ```python
-Pad(size_um=40, offset_um=30)     # 10 um bar, 40 um pads, no short
+Pad(size_um=40)                              # overlaps the trace
+Pad(size_um=40, lead=Lead(length_um=30))     # sits outside, strapped back
 ```
 
-| bar | terminals apart | centred 40 µm pad | offset 40 µm pad |
+With a lead, the pad is pushed clear of the device by `length_um` and joined
+back by a strap `width_um` wide (defaulting to the terminal's own width, so it
+adds no constriction of its own). That is how a real test structure gets a big
+probe pad onto a small resistor: two overlapping 40 µm pads on a 10 µm bar meet
+in the middle and short it out, and `build_cell` refuses to draw them.
+
+| bar | terminals apart | overlapping 40 µm pad | 40 µm pad on a lead |
 |---|---|---|---|
 | `L10_W10` | 7.5 µm | shorts | fine |
 | `L50_W10` | 40.0 µm | shorts — exact tie | fine |
 | `L100_W10` | 90 µm | fine | fine |
+
+The offset lives inside `Lead` rather than beside it on `Pad`, which makes the
+one invalid combination — a pad pushed away from the device with nothing
+joining it back — impossible to express. A `Lead(length_um=0)` is likewise
+refused, and says to drop the lead instead.
 
 `pads_bridge(pad)` answers the question directly, and
 `report_lines(devices, process, pad=pad)` flags any device it would skip, so a

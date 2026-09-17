@@ -121,8 +121,8 @@ class Resistor(ABC):
             raise ValueError(
                 f"{self.name}: a {pad.size_um} um pad spans this device's "
                 f"terminals, so the pads merge and short the resistor. Give "
-                f"the pad an offset_um so it sits outside the device, or use "
-                f"a smaller pad, or allow_bridged_pads=True.")
+                f"the pad a lead=Lead(length_um=...) so it sits outside the "
+                f"device, or use a smaller pad, or allow_bridged_pads=True.")
 
         cell = layout.create_cell(name or self.cell_name(pad))
 

@@ -6,14 +6,20 @@ and contributes contact resistance rather than sheet squares. That separation
 is enforced by Resistor.build_cell, which refuses to draw a pad without being
 told which layer to put it on.
 
-Two placements:
+Two placements, chosen by whether the pad has a lead:
 
-  offset_um = 0   the pad is centred ON the terminal. Simple, and fine when
-                  the device is longer than the pad is wide.
-  offset_um > 0   the pad sits OUTSIDE the device, joined to the terminal by a
-                  lead. This is how a real test structure gets a 100 um probe
-                  pad onto a 10 um resistor -- centring cannot, because the two
-                  pads would meet in the middle and short it out.
+  lead = None     the pad OVERLAPS the trace. It is centred on the terminal and
+                  contacts it directly, with no strap. Simple, and the right
+                  answer whenever the device is longer than the pad is wide.
+  lead = Lead(..) the pad sits OUTSIDE the device, joined to the terminal by a
+                  strap of the given length and width. This is how a real test
+                  structure gets a 100 um probe pad onto a 10 um resistor --
+                  an overlapping pad cannot, because the two would meet in the
+                  middle and short it out.
+
+The offset lives inside Lead rather than beside it on Pad, which makes the one
+invalid combination -- a pad pushed away from the device with nothing joining
+it back -- impossible to express.
 
 All four corners of a pad are convex, so both shaped styles go through
 rounded_corners' outer radius; the inner radius stays zero.
@@ -33,6 +39,31 @@ from .units import tag, um
 
 
 @dataclass(frozen=True)
+class Lead:
+    """A strap joining an offset pad back to its terminal.
+
+    length_um is the clear gap between the terminal's outer edge and the pad's
+    near edge -- i.e. how far the pad is pushed away from the device.
+
+    width_um defaults to the terminal's own width, so the strap is as wide as
+    the contact it lands on and adds no constriction of its own. Narrow it
+    deliberately if you want the lead's resistance to be negligible-but-known,
+    or to keep neighbouring devices clear.
+    """
+    length_um: float
+    width_um: Optional[float] = None
+
+    def __post_init__(self):
+        if self.length_um <= 0:
+            raise ValueError(
+                "lead length_um must be positive; a pad with no gap to span "
+                "needs no lead at all -- leave Pad.lead as None and the pad "
+                "will overlap the trace directly")
+        if self.width_um is not None and self.width_um <= 0:
+            raise ValueError("lead width_um must be positive")
+
+
+@dataclass(frozen=True)
 class Pad:
     """A contact pad.
 
@@ -40,25 +71,19 @@ class Pad:
     The corner spec's radius_um (ROUNDED) or chamfer_um (TAPERED) must fit
     inside half the smaller dimension, or the treatment would consume the pad.
 
-    offset_um is the clear gap between the terminal's outer edge and the pad's
-    near edge. Zero centres the pad on the terminal; anything positive pushes
-    it outward and draws a lead back to the terminal.
+    lead is optional. Without one the pad overlaps the trace, centred on the
+    terminal. With one it is pushed clear of the device and strapped back.
     """
     size_um: float
     height_um: Optional[float] = None
     corner: CornerSpec = field(default_factory=CornerSpec)
-    offset_um: float = 0.0
-    lead_width_um: Optional[float] = None
+    lead: Optional[Lead] = None
 
     def __post_init__(self):
         if self.size_um <= 0:
             raise ValueError("size_um must be positive")
         if self.height_um is not None and self.height_um <= 0:
             raise ValueError("height_um must be positive")
-        if self.offset_um < 0:
-            raise ValueError("offset_um cannot be negative")
-        if self.lead_width_um is not None and self.lead_width_um <= 0:
-            raise ValueError("lead_width_um must be positive")
         half = min(self.size_um, self.height()) / 2.0
         if self.corner.style is Corner.ROUNDED and self.corner.radius_um > half:
             raise ValueError(
@@ -74,17 +99,20 @@ class Pad:
         return self.size_um if self.height_um is None else self.height_um
 
     @property
-    def is_offset(self) -> bool:
-        return self.offset_um > 0
+    def has_lead(self) -> bool:
+        """True when the pad is strapped out, False when it overlaps the trace."""
+        return self.lead is not None
 
     def tag(self) -> str:
-        """Short marker for cell names, e.g. ``PAD40TP5O60``."""
+        """Short marker for cell names, e.g. ``PAD40TP5L30``."""
         size = tag(self.size_um)
         if self.height_um is not None:
             size = f"{size}x{tag(self.height_um)}"
         out = f"PAD{size}{corner_tag(self.corner)}"
-        if self.is_offset:
-            out += f"O{tag(self.offset_um)}"
+        if self.has_lead:
+            out += f"L{tag(self.lead.length_um)}"
+            if self.lead.width_um is not None:
+                out += f"W{tag(self.lead.width_um)}"
         return out
 
     # -- geometry ---------------------------------------------------------
@@ -103,18 +131,19 @@ class Pad:
     def box_at(self, terminal, direction=None) -> "pya.Box":
         """The unshaped pad box for a terminal.
 
-        Centred on the terminal when not offset; pushed out along ``direction``
-        by offset_um beyond the terminal's outer edge when it is.
+        Centred on the terminal -- overlapping the trace -- when there is no
+        lead; pushed out along ``direction`` past the terminal's outer edge
+        when there is.
         """
         half_w = um(self.size_um) // 2
         half_h = um(self.height()) // 2
         centre = terminal.center()
-        if not self.is_offset or direction is None:
+        if not self.has_lead or direction is None:
             return pya.Box(centre.x - half_w, centre.y - half_h,
                            centre.x + half_w, centre.y + half_h)
 
         dx, dy = direction
-        gap = um(self.offset_um)
+        gap = um(self.lead.length_um)
         if dx:
             edge = terminal.right if dx > 0 else terminal.left
             cx = edge + dx * (gap + half_w)
@@ -126,19 +155,19 @@ class Pad:
         return pya.Box(cx - half_w, cy - half_h, cx + half_w, cy + half_h)
 
     def lead_at(self, terminal, direction) -> Optional["pya.Box"]:
-        """The lead joining an offset pad back to its terminal.
+        """The strap joining a pad back to its terminal.
 
         Spans from the terminal's INNER edge to the pad, so it covers the whole
         terminal and the contact cannot depend on an exact edge coincidence.
-        Returns None when the pad is centred and needs no lead.
+        Returns None when the pad has no lead and simply overlaps the trace.
         """
-        if not self.is_offset or direction is None:
+        if not self.has_lead or direction is None:
             return None
         dx, dy = direction
         pad = self.box_at(terminal, direction)
         default = (terminal.height() if dx else terminal.width()) / 1000.0
-        half_lead = um(self.lead_width_um
-                       if self.lead_width_um is not None else default) // 2
+        half_lead = um(self.lead.width_um
+                       if self.lead.width_um is not None else default) // 2
         centre = terminal.center()
         if dx:
             lo, hi = (terminal.left, pad.right) if dx > 0 else (pad.left,
@@ -149,10 +178,10 @@ class Pad:
         return pya.Box(centre.x - half_lead, lo, centre.x + half_lead, hi)
 
     def polygons_at(self, terminal, direction=None) -> List["pya.Polygon"]:
-        """Pad (and lead, if offset) for one terminal.
+        """Pad, plus its lead if it has one, for a single terminal.
 
-        The lead is merged with the pad, so the result is one polygon per
-        terminal rather than two touching ones.
+        Any lead is merged into the pad, so the result is one polygon per
+        terminal rather than two that happen to touch.
         """
         region = self._shaped(self.box_at(terminal, direction))
         lead = self.lead_at(terminal, direction)

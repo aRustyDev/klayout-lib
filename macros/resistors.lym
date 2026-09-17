@@ -56,9 +56,10 @@ if DEV_RELOAD:
 
 import pya
 
-from microresistor import (DBU, Corner, CornerSpec, Dogbone, GreekCross, Pad,
-                           Process, Serpentine, StraightBar, alignment_marks,
-                           die_outline, fits_in_die, grid, report_lines)
+from microresistor import (DBU, Corner, CornerSpec, Dogbone, GreekCross, Lead,
+                           Pad, Process, Serpentine, StraightBar,
+                           alignment_marks, die_outline, fits_in_die, grid,
+                           report_lines)
 
 # ---------------------------------------------------------------------------
 # Mask setup
@@ -71,10 +72,12 @@ PAD_LAYER = (3, 0)
 LABEL_LAYER = (10, 0)
 DIE_LAYER = (0, 0)
 
-# Offset pads sit OUTSIDE the device with a lead back to each terminal. That is
-# what lets a 10 um bar carry a 40 um probe pad: centred pads would meet in the
-# middle and short it out. Set PAD to None to draw the resistors bare.
-PAD = Pad(size_um=40, offset_um=30,
+# A pad WITH a lead sits outside the device and straps back to each terminal;
+# that is what lets a 10 um bar carry a 40 um probe pad, since an overlapping
+# pad would meet its partner in the middle and short the device out. Drop the
+# lead (Pad(size_um=40)) and the pad overlaps the trace instead. PAD = None
+# draws the resistors bare.
+PAD = Pad(size_um=40, lead=Lead(length_um=30),
           corner=CornerSpec(Corner.TAPERED, chamfer_um=6))
 
 COLS = 3               # measured squarest for this sweep
