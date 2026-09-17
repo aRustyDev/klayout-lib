@@ -1,15 +1,25 @@
 """Drawn text.
 
-Isolated in its own module because it is the one thing here that needs the
-GUI-side Basic PCell library: pya.Library.library_by_name("Basic") does not
-exist under the standalone ``klayout`` wheel, so this module cannot be
-exercised by pytest. Everything else in the package can.
+Isolated in its own module because it is the one thing here that reaches for a
+PCell library rather than building polygons directly.
+
+The Basic library IS available outside KLayout, contrary to what this file used
+to claim. In the standalone ``klayout`` wheel it is simply not auto-registered:
+``import klayout.lib`` registers it, and that import has to happen BEFORE any
+``Library`` access. Touch ``Library.library_names()`` first and Basic never
+registers in that process at all -- measured, deterministic, and silent, which
+is exactly the kind of ordering trap worth writing down.
+
+Under KLayout itself ``pya`` has Basic pre-registered and no extra import is
+needed.
 """
 
 try:  # KLayout runtime
     import pya  # type: ignore
 except ImportError:  # pragma: no cover - plain Python import path
     import klayout.db as pya  # type: ignore
+    # MUST precede any pya.Library access, and there is none above this line.
+    import klayout.lib  # type: ignore  # noqa: F401
 
 
 def text_cell(layout, string, layer_num, datatype, mag_um):

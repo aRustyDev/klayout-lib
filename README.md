@@ -78,6 +78,81 @@ See [`macros/resistors.lym`](macros/resistors.lym) for a complete mask script �
 copy it into `~/.klayout/pymacros/` and run it with F5. Set `MICRORESISTOR_OUT`
 to choose where the GDS is written.
 
+### Pads
+
+A pad is a different film from the resistor — usually thick Au over something
+thin and resistive — so it goes on its own mask layer. `build_cell` refuses to
+draw one without being told which:
+
+```python
+from microresistor import Corner, CornerSpec, Pad
+
+pad = Pad(size_um=40, corner=CornerSpec(Corner.TAPERED, chamfer_um=6))
+cell = bar.build_cell(layout, metal_layer, pad=pad, pad_layer=pad_layer)
+```
+
+Pads are centred on each terminal, so a Greek cross gets four and a bar two.
+The cell name picks up a pad suffix (`BAR_L100_W10_PAD40TP6`), so one device
+can be built with several pad styles without colliding.
+
+### Corner styles
+
+Three treatments, available on pads and on device corners:
+
+| Style | Parameter | Shape |
+|---|---|---|
+| `Corner.SQUARE` | — | 90 degrees, the default |
+| `Corner.ROUNDED` | `radius_um` | circular arc |
+| `Corner.TAPERED` | `chamfer_um` | single 45-degree cut |
+
+Which corners get treated depends on the device, because it depends on their
+sign. A serpentine's bends are **convex**, so `TAPERED` cuts the outside of the
+turn and leaves the crowded inside sharp — a standard miter. A dogbone's
+neck-to-head junction and a Greek cross's reentrant corners are **concave**, so
+the treatment fills them in instead.
+
+**The square count follows the shape.** This is the point, not a detail: a
+rounded bend genuinely carries a different resistance from a sharp one, so
+`n_squares()` changes with the corner style rather than reporting a constant
+that only ever applied to 90 degrees.
+
+```python
+spec = CornerSpec(Corner.ROUNDED, radius_um=12)
+s = Serpentine(trace_thickness_um=10, leg_length_um=80, n_legs=5,
+               pitch_um=30, corner=spec)
+s.n_squares()      # 47.44, against 48.48 for the same trace with sharp bends
+```
+
+`ROUNDED` uses the analytic 90-degree annular-bend result,
+`(pi/2) / ln(r_outer / r_inner)`, and needs no fitted constant. `SQUARE` and
+`TAPERED` use literature defaults (0.56 and 0.50) that texts disagree about;
+override either with `CornerSpec(..., squares_override=...)` once you have
+measured your own.
+
+### Serpentines as waves
+
+A meander is often easier to sweep in wave terms than in legs and pitches:
+
+```python
+s = Serpentine.from_wave(trace_thickness_um=10, amplitude_um=40,
+                         length_um=120, wavelength_um=60)
+s.n_legs, s.pitch_um, s.leg_length_um      # 5, 30.0, 80.0
+```
+
+One period is a down-and-up, so `pitch = wavelength / 2`. Amplitude is
+zero-to-peak in the usual wave sense, so the leg spans twice it. Pass
+`frequency_per_um` instead of `wavelength_um` if you prefer (`f = 1 / lambda`);
+exactly one of the two is required.
+
+`length_um` is a **request**: the span is quantised to whole legs, so read
+`s.length_um` back rather than assuming you got what you asked for. The
+`wavelength_um`, `frequency_per_um` and `amplitude_um` properties likewise
+report what was actually built.
+
+Note the parameter is `trace_thickness_um`, never plain `thickness`:
+`Process.thickness_nm` already means the deposited **film** thickness, the z
+dimension that derives sheet resistance, and the two must not be confusable.
+
 ## Layout
 
 | Module | Contents | Needs |
@@ -85,10 +160,12 @@ to choose where the GDS is written.
 | `units` | `DBU`, `um()`, `tag()` | — |
 | `process` | `Material`, `Process` | — |
 | `extraction` | `sheet_resistance_vdp()` | — |
+| `corners` | `Corner`, `CornerSpec` — shapes *and* their square counts | — |
 | `report` | `report_lines()` | — |
-| `base` | `Resistor` ABC, `merged()` | pya |
+| `base` | `Resistor` ABC, `merged()`, `apply_corners()` | pya |
 | `devices` | `StraightBar`, `Dogbone`, `Serpentine`, `GreekCross` | pya |
-| `labels` | `text_cell()` | pya + GUI `Basic` PCell library |
+| `pads` | `Pad` | pya |
+| `labels` | `text_cell()` | pya + the `Basic` PCell library |
 | `placement` | `stack()` | pya |
 
 Design rules, which the module docstrings expand on:
@@ -102,9 +179,16 @@ Design rules, which the module docstrings expand on:
   `None` rather than a fiction.
 - **Each device is built in its own local frame.** `stack()` normalises with
   `cell.bbox()`, so no device has to agree with any other about its origin.
-- **The pure layer imports without `pya`.** `units`, `process`, `extraction` and
-  `report` are resolved eagerly; the geometry names are resolved lazily via PEP
-  562, so `from microresistor.process import Process` works under a bare CPython.
+- **Pads are not part of the resistor.** Different film, different layer,
+  contact resistance rather than sheet squares — so `build_cell` refuses to draw
+  a pad without a `pad_layer`, and the resistor layer is bit-identical with and
+  without pads.
+- **The pure layer imports without `pya`.** `units`, `process`, `extraction`,
+  `corners` and `report` are resolved eagerly; the geometry names are resolved
+  lazily via PEP 562, so `from microresistor.process import Process` works under
+  a bare CPython. `corners` is in that layer deliberately: the square-count
+  model is the part most able to be silently wrong, so it stays testable without
+  KLayout.
 
 Targets **Python 3.9** — the interpreter KLayout 0.30.x embeds. No `X | Y`
 unions, no 3.10+ syntax.
