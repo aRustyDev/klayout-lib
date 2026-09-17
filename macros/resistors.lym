@@ -21,9 +21,18 @@ Copy this into ~/.klayout/pymacros/ and run it from
 Macros -&gt; Macro Development (F5) as a Python macro.
 
 Everything reusable lives in the installed `microresistor` package; this file
-holds only what is specific to ONE mask: the process, the device sweep, the
-pad style, and where the GDS goes. Set MICRORESISTOR_OUT to choose the output
-path, or edit DEFAULT_OUT below.
+holds only what is specific to ONE mask: the process, the device sweep, the pad
+style, the floorplan, and where the GDS goes. Set MICRORESISTOR_OUT to choose
+the output path, or edit DEFAULT_OUT below.
+
+Four mask layers:
+    1/0   resistor film
+    3/0   pad film (thicker, more conductive -- a different deposition)
+   10/0   drawn text labels
+    0/0   die boundary. NOT a patterned layer: it records where the die ends,
+          for dicing and floorplanning. The silicon substrate itself is not
+          drawn at all -- it is unpatterned starting material, so there is no
+          mask for it, and its electrical properties belong in Process.
 
 Install the library with:
     uv pip install \
@@ -47,9 +56,10 @@ if DEV_RELOAD:
 
 import pya
 
-from microresistor import (DBU, Corner, CornerSpec, Dogbone, GreekCross, Pad,
-                           Process, Serpentine, StraightBar, report_lines,
-                           stack)
+from microresistor import (DBU, Corner, CornerSpec, Dogbone, GreekCross, Lead,
+                           Pad, Process, Serpentine, StraightBar,
+                           alignment_marks, die_outline, fits_in_die, grid,
+                           report_lines)
 
 # ---------------------------------------------------------------------------
 # Mask setup
@@ -58,11 +68,21 @@ from microresistor import (DBU, Corner, CornerSpec, Dogbone, GreekCross, Pad,
 PROCESS = Process()  # nothing known yet -- fill in from your measurements
 
 RESISTOR_LAYER = (1, 0)
-PAD_LAYER = (3, 0)      # pads are a different film, so a different mask layer
+PAD_LAYER = (3, 0)
 LABEL_LAYER = (10, 0)
+DIE_LAYER = (0, 0)
 
-# Set PAD to None to draw the resistors bare.
-PAD = Pad(size_um=40, corner=CornerSpec(Corner.TAPERED, chamfer_um=6))
+# A pad WITH a lead sits outside the device and straps back to each terminal;
+# that is what lets a 10 um bar carry a 40 um probe pad, since an overlapping
+# pad would meet its partner in the middle and short the device out. Drop the
+# lead (Pad(size_um=40)) and the pad overlaps the trace instead. PAD = None
+# draws the resistors bare.
+PAD = Pad(size_um=40, lead=Lead(length_um=30),
+          corner=CornerSpec(Corner.TAPERED, chamfer_um=6))
+
+COLS = 3               # measured squarest for this sweep
+GAP_UM = 100.0
+DIE_MARGIN_UM = 150.0  # clearance from the outermost geometry to the die edge
 
 # Corner treatments, reused below so the comparison is like for like.
 MITER = CornerSpec(Corner.TAPERED, chamfer_um=4)
@@ -112,13 +132,27 @@ OUT = os.environ.get("MICRORESISTOR_OUT", DEFAULT_OUT)
 def pad_for(device):
     """The pad, unless it would bridge this device's terminals.
 
-    A 40 um pad does not fit either end of a 10 um bar: the two pads merge and
-    short the resistor out. build_cell refuses to draw that, so the devices too
-    short to take a pad are drawn bare and contacted some other way.
+    Offset pads clear this by construction, so nothing in the sweep above
+    should come out bare -- but the check stays, because a silently missing
+    pad is the kind of thing you find on a probe station weeks later. The
+    report below names anything it skips.
     """
     if PAD is None or device.pads_bridge(PAD):
         return None
     return PAD
+
+
+def place_marks(layout, top, metal, pads, content):
+    """Two alignment mark sets, diagonally opposite, outside the array.
+
+    Two patterned layers cannot be registered to each other without them, and
+    this mask has had two since pads moved off the resistor layer.
+    """
+    marks = alignment_marks(layout, metal, pads, size_um=100.0)
+    inset = int(DIE_MARGIN_UM * 0.5 / DBU)
+    for x, y in ((content.left - inset, content.bottom - inset),
+                 (content.right + inset, content.top + inset)):
+        top.insert(pya.CellInstArray(marks.cell_index(), pya.Trans(x, y)))
 
 
 def main():
@@ -126,15 +160,32 @@ def main():
     layout.dbu = DBU
     top = layout.create_cell("TOP")
     metal = layout.layer(*RESISTOR_LAYER)
-    pad_layer = layout.layer(*PAD_LAYER) if PAD is not None else None
+    pads = layout.layer(*PAD_LAYER) if PAD is not None else None
+    die = layout.layer(*DIE_LAYER)
 
-    cells = [d.build_cell(layout, metal, pad=pad_for(d), pad_layer=pad_layer)
+    cells = [d.build_cell(layout, metal, pad=pad_for(d), pad_layer=pads)
              for d in DEVICES]
-    stack(layout, top, cells, gap_um=100.0, label_layer=LABEL_LAYER,
-          label_mag=10.0)
+    grid(layout, top, cells, cols=COLS, gap_um=GAP_UM,
+         label_layer=LABEL_LAYER, label_mag=10.0)
 
-    for line in report_lines(DEVICES, PROCESS):
+    if pads is not None:
+        place_marks(layout, top, metal, pads, top.bbox())
+
+    content = top.bbox()
+    box = die_outline(layout, top, die,
+                      content.width() * DBU + 2 * DIE_MARGIN_UM,
+                      content.height() * DBU + 2 * DIE_MARGIN_UM,
+                      centre=(content.center().x * DBU,
+                              content.center().y * DBU))
+
+    for line in report_lines(DEVICES, PROCESS, pad=PAD):
         print(line)
+
+    print()
+    print(f"die      {box.width() * DBU:7.1f} x {box.height() * DBU:7.1f} um")
+    print(f"content  {content.width() * DBU:7.1f} x "
+          f"{content.height() * DBU:7.1f} um")
+    print(f"fits     {fits_in_die(content, box)}")
 
     layout.write(OUT)
     print(f"\nwrote {OUT}")

@@ -91,9 +91,87 @@ pad = Pad(size_um=40, corner=CornerSpec(Corner.TAPERED, chamfer_um=6))
 cell = bar.build_cell(layout, metal_layer, pad=pad, pad_layer=pad_layer)
 ```
 
-Pads are centred on each terminal, so a Greek cross gets four and a bar two.
-The cell name picks up a pad suffix (`BAR_L100_W10_PAD40TP6`), so one device
-can be built with several pad styles without colliding.
+A Greek cross gets four pads and a bar two. The cell name picks up a pad suffix
+(`BAR_L100_W10_PAD40TP6`), so one device can be built with several pad styles
+without colliding.
+
+**A pad contacts the trace one of two ways, and the `lead` chooses which.**
+
+Without a lead — the default — the pad is centred on the terminal and simply
+**overlaps the trace**. That is the right answer whenever the device is longer
+than the pad is wide.
+
+```python
+Pad(size_um=40)                              # overlaps the trace
+Pad(size_um=40, lead=Lead(length_um=30))     # sits outside, strapped back
+```
+
+With a lead, the pad is pushed clear of the device by `length_um` and joined
+back by a strap `width_um` wide (defaulting to the terminal's own width, so it
+adds no constriction of its own). That is how a real test structure gets a big
+probe pad onto a small resistor: two overlapping 40 µm pads on a 10 µm bar meet
+in the middle and short it out, and `build_cell` refuses to draw them.
+
+| bar | terminals apart | overlapping 40 µm pad | 40 µm pad on a lead |
+|---|---|---|---|
+| `L10_W10` | 7.5 µm | shorts | fine |
+| `L50_W10` | 40.0 µm | shorts — exact tie | fine |
+| `L100_W10` | 90 µm | fine | fine |
+
+The offset lives inside `Lead` rather than beside it on `Pad`, which makes the
+one invalid combination — a pad pushed away from the device with nothing
+joining it back — impossible to express. A `Lead(length_um=0)` is likewise
+refused, and says to drop the lead instead.
+
+`pads_bridge(pad)` answers the question directly, and
+`report_lines(devices, process, pad=pad)` flags any device it would skip, so a
+missing pad is announced rather than silently dropped.
+
+### Alignment marks, the die outline, and the substrate
+
+Two patterned layers cannot be registered to each other without marks, and this
+library has had two since pads moved off the resistor layer:
+
+```python
+marks = alignment_marks(layout, resistor_layer, pad_layer, size_um=100)
+```
+
+That gives a coarse cross on the primary layer for the aligner to acquire, plus
+a box-in-box straddling both layers — a frame on one and a smaller filled box
+on the other — whose gap is even on all four sides only when the two masks are
+registered. `cross()`, `frame()`, `filled_box()`, `box_in_box()` and
+`build_mark_cell()` are exposed if you want to compose your own.
+
+```python
+box = die_outline(layout, top, die_layer, width_um, height_um)
+fits_in_die(top.bbox(), box)     # did everything actually land inside?
+```
+
+**The silicon substrate is deliberately not drawn.** A GDS describes *masks* —
+patterned layers — and the substrate is unpatterned starting material, so there
+is no mask for it; a filled "substrate" rectangle would say nothing to a fab.
+Its electrical properties belong in `Process` for the same reason resistivity
+does: *a GDS file cannot hold those things*. What is worth recording is where
+the **die** ends, which is what the boundary layer above is for — conventionally
+a non-printing layer used for dicing and floorplanning.
+
+### Floorplanning
+
+`stack()` puts everything in one column, which turns a sweep into a ribbon.
+`grid()` lays cells out in rows and columns instead. Measured on this library's
+own 17-device sweep:
+
+| cols | footprint | aspect |
+|---|---|---|
+| 1 (`stack`) | 340 × 3010 µm | 8.85 |
+| **3** | **1080 × 1230 µm** | **1.14** |
+| 6 | 2160 × 720 µm | 3.00 |
+
+More columns is not better: total area grows with `cols`, because each column
+is as wide as its widest member. And `grid()` does **not** help
+unconditionally — a row of devices that are themselves wide and flat just
+becomes a wider, flatter block. It pays off on a mixed sweep at a tuned column
+count, and both behaviours are pinned by tests.
 
 ### Corner styles
 
@@ -165,8 +243,9 @@ dimension that derives sheet resistance, and the two must not be confusable.
 | `base` | `Resistor` ABC, `merged()`, `apply_corners()` | pya |
 | `devices` | `StraightBar`, `Dogbone`, `Serpentine`, `GreekCross` | pya |
 | `pads` | `Pad` | pya |
+| `marks` | alignment marks, `die_outline()`, `fits_in_die()` | pya |
 | `labels` | `text_cell()` | pya + the `Basic` PCell library |
-| `placement` | `stack()` | pya |
+| `placement` | `stack()`, `grid()` | pya |
 
 Design rules, which the module docstrings expand on:
 

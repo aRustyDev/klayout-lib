@@ -47,8 +47,18 @@ _LAZY = {
     "Serpentine": ".devices",
     "GreekCross": ".devices",
     "Pad": ".pads",
+    "Lead": ".pads",
     "text_cell": ".labels",
     "stack": ".placement",
+    "grid": ".placement",
+    "alignment_marks": ".marks",
+    "build_mark_cell": ".marks",
+    "box_in_box": ".marks",
+    "cross": ".marks",
+    "frame": ".marks",
+    "filled_box": ".marks",
+    "die_outline": ".marks",
+    "fits_in_die": ".marks",
 }
 
 __all__ = [
@@ -58,8 +68,10 @@ __all__ = [
     "Corner", "CornerSpec",
     "Resistor", "merged", "apply_corners",
     "StraightBar", "Dogbone", "Serpentine", "GreekCross",
-    "Pad",
-    "text_cell", "stack", "report_lines",
+    "Pad", "Lead",
+    "cross", "frame", "filled_box", "box_in_box", "build_mark_cell",
+    "alignment_marks", "die_outline", "fits_in_die",
+    "text_cell", "stack", "grid", "report_lines",
 ]
 
 

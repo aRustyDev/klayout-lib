@@ -49,19 +49,54 @@ class Resistor(ABC):
         """
         return self.name if pad is None else f"{self.name}_{pad.tag()}"
 
+    def terminal_directions(self):
+        """Outward unit direction per terminal, as (dx, dy) in {-1, 0, 1}.
+
+        Taken from where each terminal sits relative to the device's own
+        bounding-box centre, snapped to the dominant axis. That covers every
+        device here -- a bar's ends point left and right, a cross's four arms
+        point at the compass points -- and an awkwardly shaped device can
+        override it.
+
+        Offset pads need this: a pad has to know which way "away from the
+        device" is before it can be pushed there.
+        """
+        region = pya.Region()
+        for poly in self.shapes():
+            region.insert(poly)
+        centre = region.bbox().center()
+        out = []
+        for box in self.terminals():
+            tc = box.center()
+            dx, dy = tc.x - centre.x, tc.y - centre.y
+            if abs(dx) >= abs(dy):
+                out.append((1 if dx > 0 else -1, 0))
+            else:
+                out.append((0, 1 if dy > 0 else -1))
+        return out
+
+    def pad_polygons(self, pad):
+        """Every pad polygon for this device, in its own local frame."""
+        out = []
+        for box, direction in zip(self.terminals(), self.terminal_directions()):
+            out.extend(pad.polygons_at(box, direction))
+        return out
+
     def pads_bridge(self, pad) -> bool:
         """Would these pads merge into one, shorting the device?
 
         A pad wide enough to span two terminals joins them, and the resistor
         under it measures zero. That is the worst failure this library can
-        emit -- not a wrong resistance but a dead device, discovered on a
-        probe station weeks later -- so it is worth one cheap check.
+        emit -- not a wrong resistance but a dead device, found on a probe
+        station weeks later -- so it is worth one cheap check.
+
+        An offset pad clears this by construction, which is the whole reason
+        offsetting exists.
         """
         region = pya.Region()
         terminals = self.terminals()
-        for box in terminals:
-            for poly in pad.polygons_at(box):
-                region.insert(poly)
+        for poly in self.pad_polygons(pad):
+            region.insert(poly)
         region.merge()
         return region.count() < len(terminals)
 
@@ -85,8 +120,9 @@ class Resistor(ABC):
         if pad is not None and not allow_bridged_pads and self.pads_bridge(pad):
             raise ValueError(
                 f"{self.name}: a {pad.size_um} um pad spans this device's "
-                f"terminals, so the pads merge and short the resistor. Use a "
-                f"smaller pad, a longer device, or allow_bridged_pads=True.")
+                f"terminals, so the pads merge and short the resistor. Give "
+                f"the pad a lead=Lead(length_um=...) so it sits outside the "
+                f"device, or use a smaller pad, or allow_bridged_pads=True.")
 
         cell = layout.create_cell(name or self.cell_name(pad))
 
@@ -99,9 +135,8 @@ class Resistor(ABC):
 
         if pad is not None:
             pad_region = pya.Region()
-            for box in self.terminals():
-                for poly in pad.polygons_at(box):
-                    pad_region.insert(poly)
+            for poly in self.pad_polygons(pad):
+                pad_region.insert(poly)
             pad_region.merge()
             for poly in pad_region.each():
                 cell.shapes(pad_layer).insert(poly)
