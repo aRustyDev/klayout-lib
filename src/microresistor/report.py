@@ -8,7 +8,7 @@ of its own.
 from typing import List
 
 
-def report_lines(devices, process, pad=None) -> List[str]:
+def report_lines(devices, process, pads=None) -> List[str]:
     """One line per device: square count, and a predicted R or why there isn't one.
 
     Three outcomes, kept distinct on purpose:
@@ -16,12 +16,13 @@ def report_lines(devices, process, pad=None) -> List[str]:
       - process uncalibrated -> nobody has measured R_s yet
       - otherwise            -> a predicted resistance
 
-    Pass ``pad`` to have the table say which devices cannot take it. A device
-    silently missing its pads is exactly the kind of thing you notice weeks
-    later on a probe station, so it gets said out loud here.
+    ``pads`` is an optional sequence aligned with ``devices``, one entry per
+    device -- a Pad, or None for bare. Pass the ``pads`` from an Assembly and
+    the table names the style each device actually got, which is what makes a
+    mixed sweep readable and stops a missing pad going unnoticed.
     """
     out = []
-    for d in devices:
+    for i, d in enumerate(devices):
         n = d.n_squares()
         n_str = "   n/a" if n is None else f"{n:6.2f}"
         if n is None:
@@ -30,7 +31,10 @@ def report_lines(devices, process, pad=None) -> List[str]:
             note = "R_s not measured yet"
         else:
             note = f"{process.predict(n, n_contacts=2):.1f} ohm"
-        if pad is not None and d.pads_bridge(pad):
-            note += "  [NO PAD: would bridge and short]"
-        out.append(f"{d.name:24s} squares={n_str}  {note}")
+        line = f"{d.name:24s} squares={n_str}  {note}"
+        if pads is not None:
+            pad = pads[i] if i < len(pads) else None
+            tag = pad.tag() if pad is not None else "NO PAD"
+            line = f"{line:80s} {tag}"
+        out.append(line)
     return out
