@@ -108,7 +108,7 @@ DEVICES = [
     StraightBar(100, 5),
     StraightBar(100, 20),
     StraightBar(100, 50),
-    StraightBar(20, 2),         # same ratio as L100/W10, 1/100 the area
+    StraightBar(20, 2),         # same N as L100/W10, 1/25 the area
     # --- a matched pair: one resistor, both pad styles -----------------
     # Same geometry, so the difference between them IS the lead plus the
     # contact-area change. AUTO would give both the overlap, so both are named.
