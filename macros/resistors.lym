@@ -21,9 +21,9 @@ Copy this into ~/.klayout/pymacros/ and run it from
 Macros -&gt; Macro Development (F5) as a Python macro.
 
 Everything reusable lives in the installed `microresistor` package; this file
-holds only what is specific to ONE mask: the process, the device sweep, and
-where the GDS goes. Set MICRORESISTOR_OUT to choose the output path, or edit
-DEFAULT_OUT below.
+holds only what is specific to ONE mask: the process, the device sweep, the
+pad style, and where the GDS goes. Set MICRORESISTOR_OUT to choose the output
+path, or edit DEFAULT_OUT below.
 
 Install the library with:
     uv pip install \
@@ -47,42 +47,91 @@ if DEV_RELOAD:
 
 import pya
 
-from microresistor import (DBU, Dogbone, GreekCross, Process, Serpentine,
-                           StraightBar, report_lines, stack)
+from microresistor import (DBU, Corner, CornerSpec, Dogbone, GreekCross, Pad,
+                           Process, Serpentine, StraightBar, report_lines,
+                           stack)
 
 # ---------------------------------------------------------------------------
-# The run
+# Mask setup
 # ---------------------------------------------------------------------------
 
 PROCESS = Process()  # nothing known yet -- fill in from your measurements
 
+RESISTOR_LAYER = (1, 0)
+PAD_LAYER = (3, 0)      # pads are a different film, so a different mask layer
+LABEL_LAYER = (10, 0)
+
+# Set PAD to None to draw the resistors bare.
+PAD = Pad(size_um=40, corner=CornerSpec(Corner.TAPERED, chamfer_um=6))
+
+# Corner treatments, reused below so the comparison is like for like.
+MITER = CornerSpec(Corner.TAPERED, chamfer_um=4)
+FILLET = CornerSpec(Corner.ROUNDED, radius_um=12)
+
 DEVICES = [
+    # --- sheet-resistance sweep: W fixed, L swept ---------------------
     StraightBar(10, 10),        # 1 square, contact-dominated
     StraightBar(20, 10),
     StraightBar(50, 10),
-    StraightBar(100, 10),       # W fixed, L sweep
+    StraightBar(100, 10),
     StraightBar(200, 10),
+    # --- L fixed, W swept ---------------------------------------------
     StraightBar(100, 5),
-    StraightBar(100, 20),       # L fixed, W sweep
+    StraightBar(100, 20),
     StraightBar(100, 50),
     StraightBar(20, 2),         # same ratio as L100/W10, 1/100 the area
+    # --- four-terminal and wide-contact structures --------------------
     Dogbone(50, 4, 20),         # narrow neck, wide contacts
-    Serpentine(width_um=10, leg_length_um=80, n_legs=5, pitch_um=30),
     GreekCross(arm_width_um=20, arm_length_um=40),
+    # --- corner-style comparison at matched geometry ------------------
+    # Same trace, same fold count: only the bend treatment differs, so the
+    # measured resistances isolate the corner's contribution.
+    Serpentine(trace_thickness_um=10, leg_length_um=80, n_legs=5, pitch_um=30),
+    Serpentine(trace_thickness_um=10, leg_length_um=80, n_legs=5, pitch_um=30,
+               corner=MITER),
+    Serpentine(trace_thickness_um=10, leg_length_um=80, n_legs=5, pitch_um=30,
+               corner=FILLET),
+    # --- the same serpentine, described as a wave ---------------------
+    # wavelength 60 = pitch 30 (one period is a down-and-up); amplitude 40
+    # zero-to-peak = an 80 um leg. Identical to the first serpentine above.
+    Serpentine.from_wave(trace_thickness_um=10, amplitude_um=40,
+                         length_um=120, wavelength_um=60,
+                         name="SRP_WAVE"),
+    # --- concave corner treatments ------------------------------------
+    # A dogbone's neck-to-head junction and a cross's reentrant corners are
+    # CONCAVE, so the fillet adds metal where current would otherwise crowd.
+    Dogbone(50, 4, 20, corner=CornerSpec(Corner.ROUNDED, radius_um=3)),
+    GreekCross(arm_width_um=20, arm_length_um=40,
+               corner=CornerSpec(Corner.ROUNDED, radius_um=5)),
 ]
 
 DEFAULT_OUT = os.path.expanduser("~/resistors.gds")
 OUT = os.environ.get("MICRORESISTOR_OUT", DEFAULT_OUT)
 
 
+def pad_for(device):
+    """The pad, unless it would bridge this device's terminals.
+
+    A 40 um pad does not fit either end of a 10 um bar: the two pads merge and
+    short the resistor out. build_cell refuses to draw that, so the devices too
+    short to take a pad are drawn bare and contacted some other way.
+    """
+    if PAD is None or device.pads_bridge(PAD):
+        return None
+    return PAD
+
+
 def main():
     layout = pya.Layout()
     layout.dbu = DBU
     top = layout.create_cell("TOP")
-    metal = layout.layer(1, 0)
+    metal = layout.layer(*RESISTOR_LAYER)
+    pad_layer = layout.layer(*PAD_LAYER) if PAD is not None else None
 
-    cells = [d.build_cell(layout, metal) for d in DEVICES]
-    stack(layout, top, cells, gap_um=100.0, label_layer=(10, 0), label_mag=10.0)
+    cells = [d.build_cell(layout, metal, pad=pad_for(d), pad_layer=pad_layer)
+             for d in DEVICES]
+    stack(layout, top, cells, gap_um=100.0, label_layer=LABEL_LAYER,
+          label_mag=10.0)
 
     for line in report_lines(DEVICES, PROCESS):
         print(line)

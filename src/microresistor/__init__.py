@@ -13,9 +13,12 @@ Design notes:
     about where its origin sits.
 
 Import layers:
-  units, process, extraction, report  -- pure Python, no pya, no wheel needed
-  base, devices, placement            -- need pya (KLayout) or the klayout wheel
-  labels                              -- additionally needs the GUI Basic PCell lib
+  units, process, extraction, report, corners -- pure Python, no pya needed
+  base, devices, pads, placement, labels      -- need pya, or the klayout wheel
+
+corners.py holds the corner-treatment models, including the square count each
+style contributes, and is deliberately in the pure layer: that arithmetic is
+the part most able to be silently wrong, so it stays testable without KLayout.
 
 The pure names are imported eagerly below; the pya-dependent ones are resolved
 lazily through PEP 562 __getattr__, so ``from microresistor.process import
@@ -28,6 +31,7 @@ Targets Python 3.9 -- the interpreter KLayout 0.30.x embeds.
 
 from importlib import import_module
 
+from .corners import Corner, CornerSpec
 from .extraction import sheet_resistance_vdp
 from .process import Material, Process
 from .report import report_lines
@@ -37,10 +41,12 @@ from .units import DBU, tag, um
 _LAZY = {
     "Resistor": ".base",
     "merged": ".base",
+    "apply_corners": ".base",
     "StraightBar": ".devices",
     "Dogbone": ".devices",
     "Serpentine": ".devices",
     "GreekCross": ".devices",
+    "Pad": ".pads",
     "text_cell": ".labels",
     "stack": ".placement",
 }
@@ -49,8 +55,10 @@ __all__ = [
     "DBU", "um", "tag",
     "Material", "Process",
     "sheet_resistance_vdp",
-    "Resistor", "merged",
+    "Corner", "CornerSpec",
+    "Resistor", "merged", "apply_corners",
     "StraightBar", "Dogbone", "Serpentine", "GreekCross",
+    "Pad",
     "text_cell", "stack", "report_lines",
 ]
 
