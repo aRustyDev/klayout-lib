@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description>Microresistor test-structure mask</description>
+ <version/>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>false</autorun>
+ <autorun-early>false</autorun-early>
+ <priority>0</priority>
+ <shortcut/>
+ <show-in-menu>false</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>python</interpreter>
+ <dsl-interpreter-name/>
+ <text>"""Microresistor test-structure mask -- example run script.
+
+Copy this into ~/.klayout/pymacros/ and run it from
+Macros -&gt; Macro Development (F5) as a Python macro.
+
+Everything reusable lives in the installed `microresistor` package; this file
+holds only what is specific to ONE mask: the process, the device sweep, and
+where the GDS goes. Set MICRORESISTOR_OUT to choose the output path, or edit
+DEFAULT_OUT below.
+
+Install the library with:
+    pip3 install --user git+ssh://git@github.com/aRustyDev/klayout-lib.git
+"""
+
+import os
+import sys
+
+# KLayout keeps modules in sys.modules across F5 runs within one session, so an
+# edit to the library would otherwise not be picked up without restarting.
+# Purging rather than importlib.reload(): reload() does not recursively reload
+# a package's submodules. Must happen BEFORE the import below.
+DEV_RELOAD = True
+if DEV_RELOAD:
+    for _name in [n for n in list(sys.modules)
+                  if n == "microresistor" or n.startswith("microresistor.")]:
+        del sys.modules[_name]
+
+import pya
+
+from microresistor import (DBU, Dogbone, GreekCross, Process, Serpentine,
+                           StraightBar, report_lines, stack)
+
+# ---------------------------------------------------------------------------
+# The run
+# ---------------------------------------------------------------------------
+
+PROCESS = Process()  # nothing known yet -- fill in from your measurements
+
+DEVICES = [
+    StraightBar(10, 10),        # 1 square, contact-dominated
+    StraightBar(20, 10),
+    StraightBar(50, 10),
+    StraightBar(100, 10),       # W fixed, L sweep
+    StraightBar(200, 10),
+    StraightBar(100, 5),
+    StraightBar(100, 20),       # L fixed, W sweep
+    StraightBar(100, 50),
+    StraightBar(20, 2),         # same ratio as L100/W10, 1/100 the area
+    Dogbone(50, 4, 20),         # narrow neck, wide contacts
+    Serpentine(width_um=10, leg_length_um=80, n_legs=5, pitch_um=30),
+    GreekCross(arm_width_um=20, arm_length_um=40),
+]
+
+DEFAULT_OUT = os.path.expanduser("~/resistors.gds")
+OUT = os.environ.get("MICRORESISTOR_OUT", DEFAULT_OUT)
+
+
+def main():
+    layout = pya.Layout()
+    layout.dbu = DBU
+    top = layout.create_cell("TOP")
+    metal = layout.layer(1, 0)
+
+    cells = [d.build_cell(layout, metal) for d in DEVICES]
+    stack(layout, top, cells, gap_um=100.0, label_layer=(10, 0), label_mag=10.0)
+
+    for line in report_lines(DEVICES, PROCESS):
+        print(line)
+
+    layout.write(OUT)
+    print(f"\nwrote {OUT}")
+
+
+main()</text>
+</klayout-macro>

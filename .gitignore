@@ -1,0 +1,16 @@
+# Claude Code worktrees live inside the repo and must never be committed.
+.claude/worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+
+# Layout output
+*.gds
+*.oas
+*.gds.gz
